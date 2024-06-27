@@ -51,6 +51,7 @@ class Driver(Base):
     region = relationship('Region', back_populates='drivers')
     district = relationship('District', back_populates='drivers')
     announcements = relationship('Announcement', back_populates='driver')
+    images = relationship('DriverImage', back_populates='driver')
 
 
 class Cars(Base):
@@ -81,7 +82,7 @@ class Announcement(Base):
     min_price = Column(Float)
     description = Column(String)
     added_at = Column(Date, default=datetime.utcnow)
-    is_active = Column(Boolean,default=True)
+    is_active = Column(Boolean, default=True)
 
     @validates('min_price')
     def validate_min_price(self, key, value):
@@ -92,6 +93,7 @@ class Announcement(Base):
     driver = relationship('Driver', back_populates='announcements')
     car = relationship('Cars', back_populates='announcements')
     announcement_services = relationship('AnnouncementService', back_populates='announcement')
+    images = relationship('AnnouncementImage', back_populates='announcement')
 
 
 class AnnouncementService(Base):
@@ -104,3 +106,19 @@ class AnnouncementService(Base):
     service = relationship('Services', back_populates='announcement_services')
 
 
+class DriverImage(Base):
+    __tablename__ = 'driver_images'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    driver_id = Column(Integer, ForeignKey('driver.id'))
+    url = Column(String)
+
+    driver = relationship('Driver', back_populates='images')
+
+
+class AnnouncementImage(Base):
+    __tablename__ = 'announcement_images'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    announcement_id = Column(Integer, ForeignKey('announcement.id'))
+    url = Column(Text)
+
+    announcement = relationship('Announcement', back_populates='images')
