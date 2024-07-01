@@ -125,3 +125,7 @@ class AnnouncementImage(Base):
 
 
     announcement = relationship('Announcement', back_populates='announcement_images')
+
+
+
+

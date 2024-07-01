@@ -11,10 +11,12 @@ from datetime import datetime, timedelta
 from auth.schemes import Sms_send, Sms_check, Driver_register, Get_regions, Get_districts, Add_car_service, \
     Add_announcement
 from auth.utils import generate_token, verify_token
+from fastapi.responses import FileResponse
+
 from models.models import Driver, Region, District, Services, Announcement, AnnouncementService, AnnouncementImage, \
     DriverImage
 from database import get_async_session
-from sqlalchemy import select, insert, and_
+from sqlalchemy import select, insert, and_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import NoResultFound
@@ -80,34 +82,92 @@ async def check_sms(model: Sms_check, session: AsyncSession = Depends(get_async_
 
 
 @register_router.post('/register_driver')
-async def register_driver(model: Driver_register,
-                          file: UploadFile = File(...),
-                          session: AsyncSession = Depends(get_async_session)):
+async def register_driver(
+        model: Driver_register,
+        session: AsyncSession = Depends(get_async_session)
+):
     # Insert the driver and flush to get the driver_id
     query = insert(Driver).values(**model.dict(), register_at=datetime.utcnow()).returning(Driver.id)
     result = await session.execute(query)
     driver_id = result.scalar()
+    await session.commit()
+
+    # Generate a token for the registered driver
+    token = generate_token(driver_id)
+
+    return {"token": token}
+
+
+@register_router.post('/add_driver_image')
+async def add_driver_image(
+        image: UploadFile,
+        token: dict = Depends(verify_token),
+        session: AsyncSession = Depends(get_async_session)
+):
+    driver_id = token.get('user_id')
+
+    # Check if the driver exists
+    driver_result = await session.execute(select(Driver).where(Driver.id == driver_id))
+    driver = driver_result.scalars().first()
+
+    if driver is None:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    url = f'images/{image.filename}'
 
     # Save the uploaded file
-    url = f'images/{file.filename}'
     async with aiofiles.open(url, 'wb') as zipf:
-        content = await file.read()
+        content = await image.read()
         await zipf.write(content)
+
     hashcode = secrets.token_hex(32)
-    data = insert(DriverImage).values(url=url,hashcode=hashcode, driver_id=driver_id)
-    await session.execute(data)
+
+    # Check if an image already exists for the driver
+    image_result = await session.execute(select(DriverImage).where(DriverImage.driver_id == driver_id))
+    driver_image = image_result.scalars().first()
+
+    if driver_image:
+        # Update the existing image record
+        await session.execute(
+            update(DriverImage)
+            .where(DriverImage.driver_id == driver_id)
+            .values(url=url, hashcode=hashcode)
+        )
+    else:
+        # Insert a new image record
+        await session.execute(
+            insert(DriverImage)
+            .values(url=url, hashcode=hashcode, driver_id=driver_id)
+        )
+
     await session.commit()
-    return {"message": "Registered", "driver_id": driver_id}
+
+    return {"message": "Image added or updated"}
 
 
+@register_router.get('/get_driver_image/')
+async def get_driver_image(token: dict = Depends(verify_token), session: AsyncSession = Depends(get_async_session)):
+    driver_id = token.get('user_id')
+    result = await session.execute(select(DriverImage).where(DriverImage.driver_id == driver_id))
+    driver_image = result.scalars().first()
+    if driver_image is None:
+        raise HTTPException(status_code=404, detail="Image not found for the given driver ID")
 
-# @register_router.post('/add_announcement')
-async def add_announcement(model: Add_announcement,
-                           file : UploadFile = File(...),
-                           token: dict = Depends(verify_token),
-                           session: AsyncSession = Depends(get_async_session)):
+    file_path = driver_image.url
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(file_path)
+
+
+@register_router.post('/add_announcement')
+async def add_announcement(
+        model: Add_announcement,
+        token: dict = Depends(verify_token),
+        session: AsyncSession = Depends(get_async_session)
+):
     if token is None:
-        return HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     driver_id = token.get('user_id')
     announcement = Announcement(
@@ -120,15 +180,45 @@ async def add_announcement(model: Add_announcement,
         is_active=True
     )
     session.add(announcement)
-    await session.flush()
+    await session.flush()  # Ensure the ID is generated before accessing it
     announcement_id = announcement.id
 
     announcement_services = [
         AnnouncementService(announcement_id=announcement_id, service_id=service_id)
         for service_id in model.service_id
     ]
-    if not os.path.exists('images'):
-        os.makedirs('images')
+    session.add_all(announcement_services)
+
+    await session.commit()
+
+    return {'announcement_id': announcement_id}
+
+
+@register_router.get('/get_announcement_image/{announcement_id}')
+async def get_announcement_image(announcement_id: int, session: AsyncSession = Depends(get_async_session)):
+    result = await session.execute(
+        select(AnnouncementImage).where(AnnouncementImage.announcement_id == announcement_id))
+    announcement_image = result.scalars().first()
+    if announcement_image is None:
+        raise HTTPException(status_code=404, detail="Image not found for the given announcement ID")
+
+    file_path = announcement_image.url
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(file_path)
+
+
+@register_router.post('/add_announcement_image')
+async def add_announcement_image(
+        file: UploadFile,
+        announcement_id: int,
+        session: AsyncSession = Depends(get_async_session)
+):
+    # Check if announcement exists
+    announcement = await session.get(Announcement, announcement_id)
+    if announcement is None:
+        raise HTTPException(status_code=404, detail="Announcement not found")
 
     # Save the uploaded file
     url = f'images/{file.filename}'
@@ -136,11 +226,11 @@ async def add_announcement(model: Add_announcement,
         content = await file.read()
         await zipf.write(content)
     hashcode = secrets.token_hex(32)
-    data = insert(AnnouncementImage).values(url=url,hashcode=hashcode, announcement_id=announcement_id)
+    data = insert(AnnouncementImage).values(url=url, hashcode=hashcode, announcement_id=announcement_id)
     await session.execute(data)
     await session.commit()
 
-    return {'success': True}
+    return {"Success": True, "detail": "Image added"}
 
 
 @register_router.get('/get_regions', response_model=List[Get_regions])
@@ -170,7 +260,6 @@ async def get_districts(region_id: int, session: AsyncSession = Depends(get_asyn
     ]
 
     return result
-
 
 
 @register_router.post('/add_car_service')

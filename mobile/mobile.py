@@ -18,11 +18,11 @@ from auth.utils import verify_token
 from database import get_async_session
 from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload
-from mobile.schemes import GetAllAnnouncements, GetCar, GetDriver, GetService, Announcement_Service, GetService_by_id
+from mobile.schemes import GetAllAnnouncements, GetCar, GetDriver, GetService, Announcement_Service, GetService_by_id, \
+    GetDriverImage, GetAnnouncementImage
 from models.models import Announcement, AnnouncementService, Cars, Driver, Services
 
 mobile_router = APIRouter()
-
 
 @mobile_router.get('/get_announcements', response_model=List[GetAllAnnouncements])
 async def get_all_announcements(session: AsyncSession = Depends(get_async_session)):
@@ -30,6 +30,8 @@ async def get_all_announcements(session: AsyncSession = Depends(get_async_sessio
         selectinload(Announcement.announcement_services).selectinload(AnnouncementService.service),
         selectinload(Announcement.driver).selectinload(Driver.region),
         selectinload(Announcement.driver).selectinload(Driver.district),
+        selectinload(Announcement.driver).selectinload(Driver.driver_images),
+        selectinload(Announcement.announcement_images),
         selectinload(Announcement.car)
     )
     res = await session.execute(query)
@@ -69,7 +71,22 @@ async def get_all_announcements(session: AsyncSession = Depends(get_async_sessio
             last_name=driver.last_name,
             phone=driver.phone,
             region_id=to_get_regions(driver.region),
-            district_id=to_get_districts(driver.district)
+            district_id=to_get_districts(driver.district),
+            driver_images=[to_get_driver_image(image) for image in driver.driver_images]
+        )
+
+    def to_get_driver_image(driver_image):
+        return GetDriverImage(
+            id=driver_image.id,
+            url=driver_image.url,
+            hashcode=driver_image.hashcode
+        )
+
+    def to_get_announcement_image(announcement_image):
+        return GetAnnouncementImage(
+            id=announcement_image.id,
+            url=announcement_image.url,
+            hashcode=announcement_image.hashcode
         )
 
     def to_get_car(car):
@@ -87,13 +104,13 @@ async def get_all_announcements(session: AsyncSession = Depends(get_async_sessio
             min_price=announcement.min_price,
             description=announcement.description,
             added_at=announcement.added_at,
-            services=[to_announcement_service(aservice) for aservice in announcement.announcement_services]
+            services=[to_announcement_service(aservice) for aservice in announcement.announcement_services],
+            announcement_images=[to_get_announcement_image(image) for image in announcement.announcement_images]
         )
         for announcement in announcements
     ]
 
     return result
-
 
 @mobile_router.get('/get_service_by_car_id', response_model=List[GetService_by_id])
 async def get_services_by_id(car_id: int, session: AsyncSession = Depends(get_async_session)):

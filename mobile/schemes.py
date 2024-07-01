@@ -4,16 +4,24 @@ from pydantic import BaseModel
 
 from auth.schemes import Get_regions, Get_districts
 
-
 class GetCar(BaseModel):
     id: int
     name: str
+
+class GetDriverImage(BaseModel):
+    id: int
+    url: str
+    hashcode: str
+
+class GetAnnouncementImage(BaseModel):
+    id: int
+    url: str
+    hashcode: str
 
 class GetService(BaseModel):
     id: int
     name: str
     car_id: int
-
 
 class GetService_by_id(BaseModel):
     id: int
@@ -32,6 +40,7 @@ class GetDriver(BaseModel):
     phone: str
     region_id: Get_regions
     district_id: Get_districts
+    driver_images: List[GetDriverImage]
 
 class GetAllAnnouncements(BaseModel):
     id: int
@@ -42,3 +51,4 @@ class GetAllAnnouncements(BaseModel):
     description: str
     added_at: datetime
     services: List[Announcement_Service]
+    announcement_images: List[GetAnnouncementImage]
