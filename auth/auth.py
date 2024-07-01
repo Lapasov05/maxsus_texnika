@@ -4,19 +4,21 @@ import random
 import secrets
 from typing import List
 
+import aiofiles
 import jwt
 from datetime import datetime, timedelta
 
 from auth.schemes import Sms_send, Sms_check, Driver_register, Get_regions, Get_districts, Add_car_service, \
     Add_announcement
 from auth.utils import generate_token, verify_token
-from models.models import Driver, Region, District, Services, Announcement, AnnouncementService
+from models.models import Driver, Region, District, Services, Announcement, AnnouncementService, AnnouncementImage, \
+    DriverImage
 from database import get_async_session
 from sqlalchemy import select, insert, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import NoResultFound
-from fastapi import Depends, APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from passlib.context import CryptContext
 import redis
@@ -78,11 +80,67 @@ async def check_sms(model: Sms_check, session: AsyncSession = Depends(get_async_
 
 
 @register_router.post('/register_driver')
-async def register_driver(model: Driver_register, session: AsyncSession = Depends(get_async_session)):
-    query = insert(Driver).values(**model.dict(), register_at=datetime.utcnow())
-    await session.execute(query)
+async def register_driver(model: Driver_register,
+                          file: UploadFile = File(...),
+                          session: AsyncSession = Depends(get_async_session)):
+    # Insert the driver and flush to get the driver_id
+    query = insert(Driver).values(**model.dict(), register_at=datetime.utcnow()).returning(Driver.id)
+    result = await session.execute(query)
+    driver_id = result.scalar()
+
+    # Save the uploaded file
+    url = f'images/{file.filename}'
+    async with aiofiles.open(url, 'wb') as zipf:
+        content = await file.read()
+        await zipf.write(content)
+    hashcode = secrets.token_hex(32)
+    data = insert(DriverImage).values(url=url,hashcode=hashcode, driver_id=driver_id)
+    await session.execute(data)
     await session.commit()
-    return HTTPException(status_code=201, detail="Registered")
+    return {"message": "Registered", "driver_id": driver_id}
+
+
+
+# @register_router.post('/add_announcement')
+async def add_announcement(model: Add_announcement,
+                           file : UploadFile = File(...),
+                           token: dict = Depends(verify_token),
+                           session: AsyncSession = Depends(get_async_session)):
+    if token is None:
+        return HTTPException(status_code=401, detail="Unauthorized")
+
+    driver_id = token.get('user_id')
+    announcement = Announcement(
+        car_id=model.car_id,
+        driver_id=driver_id,
+        max_price=model.max_price,
+        min_price=model.min_price,
+        description=model.description,
+        added_at=datetime.utcnow(),
+        is_active=True
+    )
+    session.add(announcement)
+    await session.flush()
+    announcement_id = announcement.id
+
+    announcement_services = [
+        AnnouncementService(announcement_id=announcement_id, service_id=service_id)
+        for service_id in model.service_id
+    ]
+    if not os.path.exists('images'):
+        os.makedirs('images')
+
+    # Save the uploaded file
+    url = f'images/{file.filename}'
+    async with aiofiles.open(url, 'wb') as zipf:
+        content = await file.read()
+        await zipf.write(content)
+    hashcode = secrets.token_hex(32)
+    data = insert(AnnouncementImage).values(url=url,hashcode=hashcode, announcement_id=announcement_id)
+    await session.execute(data)
+    await session.commit()
+
+    return {'success': True}
 
 
 @register_router.get('/get_regions', response_model=List[Get_regions])
@@ -113,35 +171,6 @@ async def get_districts(region_id: int, session: AsyncSession = Depends(get_asyn
 
     return result
 
-
-@register_router.post('/add_announcement')
-async def add_announcement(model: Add_announcement, token: dict = Depends(verify_token),
-                           session: AsyncSession = Depends(get_async_session)):
-    if token is None:
-        return HTTPException(status_code=401, detail="Unauthorized")
-
-    driver_id = token.get('user_id')
-    announcement = Announcement(
-        car_id=model.car_id,
-        driver_id=driver_id,
-        max_price=model.max_price,
-        min_price=model.min_price,
-        description=model.description,
-        added_at=datetime.utcnow(),
-        is_active=True
-    )
-    session.add(announcement)
-    await session.flush()
-    announcement_id = announcement.id
-
-    announcement_services = [
-        AnnouncementService(announcement_id=announcement_id, service_id=service_id)
-        for service_id in model.service_id
-    ]
-    session.add_all(announcement_services)
-    await session.commit()
-
-    return {'success': True}
 
 
 @register_router.post('/add_car_service')

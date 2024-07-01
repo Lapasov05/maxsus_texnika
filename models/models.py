@@ -51,7 +51,7 @@ class Driver(Base):
     region = relationship('Region', back_populates='drivers')
     district = relationship('District', back_populates='drivers')
     announcements = relationship('Announcement', back_populates='driver')
-    images = relationship('DriverImage', back_populates='driver')
+    driver_images = relationship('DriverImage', back_populates='driver')
 
 
 class Cars(Base):
@@ -93,7 +93,7 @@ class Announcement(Base):
     driver = relationship('Driver', back_populates='announcements')
     car = relationship('Cars', back_populates='announcements')
     announcement_services = relationship('AnnouncementService', back_populates='announcement')
-    images = relationship('AnnouncementImage', back_populates='announcement')
+    announcement_images = relationship('AnnouncementImage', back_populates='announcement')
 
 
 class AnnouncementService(Base):
@@ -111,8 +111,9 @@ class DriverImage(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     driver_id = Column(Integer, ForeignKey('driver.id'))
     url = Column(String)
+    hashcode = Column(String, unique=True)
 
-    driver = relationship('Driver', back_populates='images')
+    driver = relationship('Driver', back_populates='driver_images')
 
 
 class AnnouncementImage(Base):
@@ -120,5 +121,7 @@ class AnnouncementImage(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     announcement_id = Column(Integer, ForeignKey('announcement.id'))
     url = Column(Text)
+    hashcode = Column(String, unique=True)
 
-    announcement = relationship('Announcement', back_populates='images')
+
+    announcement = relationship('Announcement', back_populates='announcement_images')

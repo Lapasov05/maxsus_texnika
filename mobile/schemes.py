@@ -1,28 +1,44 @@
 from datetime import datetime
-from pydantic import conint
-from typing import Optional, List
-from typing import Union
+from typing import List
+from pydantic import BaseModel
 
-from pydantic import BaseModel, Field
+from auth.schemes import Get_regions, Get_districts
 
 
 class GetCar(BaseModel):
-    id:int
-    name:str
+    id: int
+    name: str
 
 class GetService(BaseModel):
-    id:int
-    name:str
-    car_id:int
-class AnnouncementService(BaseModel):
-    id:int
-    announcement_id:int
-    service_id:List[GetService]
+    id: int
+    name: str
+    car_id: int
+
+
+class GetService_by_id(BaseModel):
+    id: int
+    name: str
+    car: GetCar
+
+class Announcement_Service(BaseModel):
+    id: int
+    announcement_id: int
+    service: GetService
+
+class GetDriver(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    phone: str
+    region_id: Get_regions
+    district_id: Get_districts
 
 class GetAllAnnouncements(BaseModel):
-    id:int
-    car_id: GetCar
+    id: int
+    car: GetCar
+    driver: GetDriver
     max_price: float
     min_price: float
     description: str
-    service_id: List[AnnouncementService]
+    added_at: datetime
+    services: List[Announcement_Service]
