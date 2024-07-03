@@ -1,89 +1,84 @@
-class SendOTPAPIView(APIView):
-    schema = send_otp_schema
+from fastapi import FastAPI, HTTPException, Form
+import requests
+import httpx
+import asyncio
 
-    @swagger_auto_schema(
-        request_body=send_to_optain_token_response_body,
-        responses={200: send_to_optain_token_response}
-    )
-    def post(self, request):
-        language = get_language_from_request(request)
-        phone = request.data.get('phone')
-        device_id = request.data.get('autofill')
-        print(phone, device_id)
-        if phone == "+998123456789":
-            return Response({"detail": "code sent"})
+app = FastAPI()
 
-        resp = send_message(phone=phone, device_id=device_id)
-        if resp.status_code == 200:
-            return Response({"detail": "Kod yuborildi" if language == "uz" else "Код отправлен"})
-        return Response({"detail": "Kod yuborishda xatolik yuz berdi" if language == "uz" else "Ошибка отправки кода"},
-                        status=resp.status_code)
-
-
-class VerifyOTPAPIView(APIView):
-    schema = verify_schema
-
-    @swagger_auto_schema(
-        request_body=verifay_token_response_body,
-        responses={200: verifay_token_response}
-    )
-    def post(self, request):
-        language = get_language_from_request(request)
-        code = request.data['code']
-        phone = request.data['phone']
-
-        if phone == "+998123456789" and code == "123456":
-            user = User.objects.filter(username=phone).first()
-            if not user:
-                user = User.objects.create(username=phone)
-            refresh = RefreshToken.for_user(user)
-            return Response({"access": str(refresh.access_token), "refresh": str(refresh)})
-
-        cor = check_code(code, phone)
-        if cor:
-            user = User.objects.filter(username=phone).first()
-            if not user:
-                user = User.objects.create(username=phone)
-        else:
-            return Response({'detail': "Kod noto'g'ri kiritildi" if language == "uz" else "Код введен неправильно"},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        refresh = RefreshToken.for_user(user)
-        return Response({"access": str(refresh.access_token), "refresh": str(refresh)})
+async def send_login_request_to_eskiz(email: str, password: str) -> dict:
+    url = "https://notify.eskiz.uz/api/auth/login"
+    data = {
+        "email": email,
+        "password": password
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, data=data)
+            response.raise_for_status()  # Raise an exception for 4xx/5xx responses
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        print(f"Request data: {data}")
+        print(f"Response status: {exc.response.status_code}")
+        print(f"Response text: {exc.response.text}")
+        raise HTTPException(status_code=exc.response.status_code, detail=f"Eskiz API error: {exc.response.text}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(exc)}")
 
 
-def check_code(code, phone):
-    orginal_code = rds.get(phone)
-    if orginal_code is None:
-        return False
-    orginal_code = orginal_code.decode('utf-8')
-    correct = orginal_code == code
-    return correct
+# async def send_sms_eskiz(token: str, mobile_phone: str, message: str) -> dict:
+#     url = "https://notify.eskiz.uz/api/message/sms/send"
+#     headers = {
+#         'Authorization': f"Bearer {token}"
+#     }
+#     data = {
+#         'mobile_phone': f"998{mobile_phone}",
+#         'message': f"Your verification code is: {message}",
+#         'from': "Maxsus texnika"
+#     }
+#
+#     data['callback_url'] = "http://0000.uz/test.php"
+#
+#     try:
+#         async with httpx.AsyncClient() as client:
+#             response = await client.post(url, headers=headers, data=data)
+#             response.raise_for_status()  # Raise an exception for 4xx/5xx responses
+#             return response.json()
+#     except httpx.HTTPStatusError as exc:
+#         print(f"Request data: {data}")
+#         print(f"Response status: {exc.response.status_code}")
+#         print(f"Response text: {exc.response.text}")
+#         raise HTTPException(status_code=exc.response.status_code, detail=f"Eskiz API error: {exc.response.text}")
+#     except Exception as exc:
+#         raise HTTPException(status_code=500, detail=f"Internal server error: {str(exc)}")
 
 
-def generateOTP(phone):
-    digits = "0123456789"
-    OTP = ""
+async def refresh_token_eskiz(refresh_token: str) -> dict:
+    url = "https://notify.eskiz.uz/api/auth/refresh"
+    data = {
+        "refresh_token": refresh_token
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(url, data=data)
+            response.raise_for_status()  # Raise an exception for 4xx/5xx responses
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=exc.response.status_code, detail=f"Eskiz API error: {exc.response.text}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(exc)}")
 
-    for i in range(6):
-        OTP += digits[math.floor(random.random() * 10)]
-    rds.set(name=phone, value=OTP)
-    rds.expire(name=phone, time=65)
-
-    return OTP
 
 
-def send_message(phone, device_id=None):
-    otp = generateOTP(phone)
-    send_url = BASE_URL + "/message/sms/send"
-    token = SMSProvider.objects.first().token
+def send_message(phone, code,token_sms):
+    send_url = "https://notify.eskiz.uz/api/message/sms/send"
+    token = token_sms
     headers = {
         'Authorization': f'Bearer {token}'
     }
     # Vash kod podtverjdeniya dlya mobilnogo prilojeniya Avtoritet Group:
     data = {
         'mobile_phone': phone[1:],
-        'message': f"<#> Your verification code: {otp} {device_id}",
+        'message': f"<#> Your verification code: {code}",
         'from': 'xxxx'
     }
 
@@ -92,12 +87,26 @@ def send_message(phone, device_id=None):
     # print(resp.status_code, resp.text)
 
     if resp.status_code == 401:
-        token = refresh_token()
+        token = refresh_token_eskiz(token_sms)
 
         headers = {
             'Authorization': f'Bearer {token}'
         }
         resp = requests.post(url=send_url, data=data, headers=headers)
-    # print(resp.status_code, resp.text)
+    print(resp.status_code, resp.text)
 
     return resp
+
+async def main():
+    try:
+        result = await send_login_request_to_eskiz("fayzulloevasadbek@gmail.com", "zVNnLo76p9g4WJIN6lIdliHdGjoroyOnpHgsTvFT")
+        print(result['data']['token'])
+        token_sms = result['data']['token']
+        print(send_message("+998993590562","4556",token_sms))
+
+    except HTTPException as exc:
+        print(f"HTTP Exception: {exc.detail}")
+
+# Run the main function to test
+if __name__ == "__main__":
+    asyncio.run(main())

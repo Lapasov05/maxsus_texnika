@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List,Optional
 from pydantic import BaseModel
 
 from auth.schemes import Get_regions, Get_districts
@@ -40,7 +40,7 @@ class GetDriver(BaseModel):
     phone: str
     region_id: Get_regions
     district_id: Get_districts
-    driver_images: List[GetDriverImage]
+    driver_images: Optional[List[GetDriverImage]] = None
 
 class GetAllAnnouncements(BaseModel):
     id: int
